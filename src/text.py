@@ -3,6 +3,7 @@
 Reference: https://www.tensorflow.org/datasets/api_docs/python/tfds/features/text_lib
 """
 import abc
+from pathlib import Path
 
 BERT_FIRST_IDX = 997  # Replacing the 2 tokens right before english starts as <eos> & <unk>
 BERT_LAST_IDX = 29635  # Drop rest of tokens
@@ -116,10 +117,16 @@ class SubwordTextEncoder(_BaseTextEncoder):
         return self.spm.decode_ids(crop_idx)
 
     @classmethod
-    def load_from_file(cls, filepath):
+    def load_from_file(cls, filepath, path_from_home=True):
         import sentencepiece as splib
         spm = splib.SentencePieceProcessor()
-        spm.load(filepath)
+        
+        if path_from_home:
+            core_path = Path.home()
+        else:
+            core_path = Path(".")
+            
+        spm.load(str(core_path.joinpath(filepath)))        
         spm.set_encode_extra_options(":eos")
         return cls(spm)
 
@@ -221,13 +228,13 @@ class BertTextEncoder(_BaseTextEncoder):
         return 2
 
 
-def load_text_encoder(mode, vocab_file):
+def load_text_encoder(mode, vocab_file, path_from_home):
     if mode == "character":
-        return CharacterTextEncoder.load_from_file(vocab_file)
+        return CharacterTextEncoder.load_from_file(vocab_file, path_from_home)
     elif mode == "subword":
-        return SubwordTextEncoder.load_from_file(vocab_file)
+        return SubwordTextEncoder.load_from_file(vocab_file, path_from_home)
     elif mode == "word":
-        return WordTextEncoder.load_from_file(vocab_file)
+        return WordTextEncoder.load_from_file(vocab_file, path_from_home)
     elif mode.startswith("bert-"):
         return BertTextEncoder.load_from_file(mode)
     else:

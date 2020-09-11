@@ -5,8 +5,20 @@ from src.audio import create_transform
 from torch.utils.data import DataLoader
 from torch.nn.utils.rnn import pad_sequence
 
+# from marynlp.data.transformers.specialized import NormSwahiliTextTransformer
+from marynlp.data.transformers import StackedDataTextTransformer
+from marynlp.data.transformers.specialized import TextNormalizer, SwahiliTextTransformer
+
+class NormSwahiliTextTransformer(StackedDataTextTransformer):
+    def __init__(self):
+        super().__init__([
+            TextNormalizer(),
+            SwahiliTextTransformer()
+        ])
+
 # Batch size will be halfed if the longest wavefile surpasses threshold
 HALF_BATCHSIZE_AUDIO_LEN = 800
+
 # Note: Bucketing may cause random sampling to be biased (less sampled for those length > HALF_BATCHSIZE_AUDIO_LEN )
 HALF_BATCHSIZE_TEXT_LEN = 150
 
@@ -61,33 +73,48 @@ def collect_text_batch(batch, mode):
     return text
 
 
-def create_dataset(tokenizer, ascending, name, path, bucketing, batch_size,
-                   train_split=None, dev_split=None, test_split=None):
+def create_dataset(tokenizer, name, path, bucketing, batch_size, path_from_home,
+                   train_manifest_csv=None, val_manifest_csv=None, test_manifest_csv=None):
     ''' Interface for creating all kinds of dataset'''
 
+    assert test_manifest_csv is None, "This 'test_manifest_csv' is not implemented yet"
+    
     # Recognize corpus
-    if name.lower() == "librispeech":
-        from corpus.librispeech import LibriDataset as Dataset
+    if name.lower() == 'mnm-early':
+        from corpus.mnm_early import MnMAudioDataset as Dataset
     else:
         raise NotImplementedError
 
     # Create dataset
-    if train_split is not None:
+    if train_manifest_csv is not None:
         # Training mode
         mode = 'train'
-        tr_loader_bs = 1 if bucketing and (not ascending) else batch_size
-        bucket_size = batch_size if bucketing and (
-            not ascending) else 1  # Ascending without bucketing
+        tr_loader_bs = 1 if bucketing else batch_size
+        bucket_size = batch_size if bucketing else 1
+        
         # Do not use bucketing for dev set
-        dv_set = Dataset(path, dev_split, tokenizer, 1)
-        tr_set = Dataset(path, train_split, tokenizer,
-                         bucket_size, ascending=ascending)
+        val_set = Dataset(path=path, 
+                         manifest_csv_file=val_manifest_csv, 
+                         tokenizer=tokenizer,
+                         data_transformer=NormSwahiliTextTransformer(),
+                         bucket_size=1, 
+                         path_from_home=path_from_home)
+        
+        tr_set = Dataset(path=path, 
+                         manifest_csv_file=train_manifest_csv, 
+                         tokenizer=tokenizer,
+                         data_transformer=NormSwahiliTextTransformer(),
+                         bucket_size=bucket_size, 
+                         path_from_home=path_from_home)
+        
         # Messages to show
-        msg_list = _data_msg(name, path, train_split.__str__(), len(tr_set),
-                             dev_split.__str__(), len(dv_set), batch_size, bucketing)
+        msg_list = _data_msg(name, path, train_manifest_csv, len(tr_set),
+                             val_manifest_csv, len(val_set), batch_size, bucketing)
 
-        return tr_set, dv_set, tr_loader_bs, batch_size, mode, msg_list
+        return tr_set, val_set, tr_loader_bs, batch_size, mode, msg_list
     else:
+        raise AssertionError("Let's not do this now")
+        
         # Testing model
         mode = 'test'
         # Do not use bucketing for dev set
@@ -102,31 +129,43 @@ def create_dataset(tokenizer, ascending, name, path, bucketing, batch_size,
         return dv_set, tt_set, batch_size, batch_size, mode, msg_list
 
 
-def create_textset(tokenizer, train_split, dev_split, name, path, bucketing, batch_size):
+def create_textset(tokenizer, train_manifest_csv, val_manifest_csv, name, path, bucketing, batch_size, path_from_home):
     ''' Interface for creating all kinds of text dataset'''
     msg_list = []
 
     # Recognize corpus
-    if name.lower() == "librispeech":
-        from corpus.librispeech import LibriTextDataset as Dataset
+    if name.lower() == 'mnm-early':
+        from corpus.mnm_early import MnMAudioTextDataset as Dataset
     else:
         raise NotImplementedError
 
     # Create dataset
     bucket_size = batch_size if bucketing else 1
     tr_loader_bs = 1 if bucketing else batch_size
+        
     # Do not use bucketing for dev set
-    dv_set = Dataset(path, dev_split, tokenizer, 1)
-    tr_set = Dataset(path, train_split, tokenizer, bucket_size)
+    val_set = Dataset(path=path, 
+                     manifest_csv_file=val_manifest_csv, 
+                     tokenizer=tokenizer,
+                     data_transformer=NormSwahiliTextTransformer(),
+                     bucket_size=1, 
+                     path_from_home=path_from_home)
+
+    tr_set = Dataset(path=path, 
+                     manifest_csv_file=train_manifest_csv, 
+                     tokenizer=tokenizer,
+                     data_transformer=NormSwahiliTextTransformer(),
+                     bucket_size=bucket_size, 
+                     path_from_home=path_from_home)
 
     # Messages to show
-    msg_list = _data_msg(name, path, train_split.__str__(), len(tr_set),
-                         dev_split.__str__(), len(dv_set), batch_size, bucketing)
+    msg_list = _data_msg(name, path, train_manifest_csv, len(tr_set),
+                         val_manifest_csv, len(val_set), batch_size, bucketing)
 
-    return tr_set, dv_set, tr_loader_bs, batch_size, msg_list
+    return tr_set, val_set, tr_loader_bs, batch_size, msg_list
 
 
-def load_dataset(n_jobs, use_gpu, pin_memory, ascending, corpus, audio, text):
+def load_dataset(n_jobs, use_gpu, pin_memory, corpus, audio, text):
     ''' Prepare dataloader for training/validation'''
 
     # Audio feature extractor
@@ -135,14 +174,15 @@ def load_dataset(n_jobs, use_gpu, pin_memory, ascending, corpus, audio, text):
     tokenizer = load_text_encoder(**text)
     # Dataset (in testing mode, tr_set=dv_set, dv_set=tt_set)
     tr_set, dv_set, tr_loader_bs, dv_loader_bs, mode, data_msg = create_dataset(
-        tokenizer, ascending, **corpus)
+        tokenizer, **corpus)
+    
     # Collect function
     collect_tr = partial(collect_audio_batch,
                          audio_transform=audio_transform, mode=mode)
     collect_dv = partial(collect_audio_batch,
                          audio_transform=audio_transform, mode='test')
     # Shuffle/drop applied to training set only
-    shuffle = (mode == 'train' and not ascending)
+    shuffle = (mode == 'train')
     drop_last = shuffle
     # Create data loader
     tr_set = DataLoader(tr_set, batch_size=tr_loader_bs, shuffle=shuffle, drop_last=drop_last, collate_fn=collect_tr,
@@ -156,7 +196,7 @@ def load_dataset(n_jobs, use_gpu, pin_memory, ascending, corpus, audio, text):
     return tr_set, dv_set, feat_dim, tokenizer.vocab_size, tokenizer, data_msg
 
 
-def load_textset(n_jobs, use_gpu, pin_memory, corpus, text):
+def load_textset(n_jobs, use_gpu, pin_memory, corpus, audio, text):
 
     # Text tokenizer
     tokenizer = load_text_encoder(**text)

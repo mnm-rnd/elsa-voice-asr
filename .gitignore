@@ -124,3 +124,6 @@ run.sh
 
 # swap file
 *.swp
+
+# chekpoints
+ckpt/

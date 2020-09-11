@@ -1,7 +1,8 @@
 import torch
 from src.solver import BaseSolver
 
-from src.lm import RNNLM
+# from src.lm import RNNLM
+from src.asr import ASR
 from src.optim import Optimizer
 from src.data import load_textset
 from src.util import human_format
@@ -31,10 +32,8 @@ class Solver(BaseSolver):
 
     def set_model(self):
         ''' Setup ASR model and optimizer '''
-
         # Model
-        self.model = RNNLM(self.vocab_size, **
-                           self.config['model']).to(self.device)
+        self.model = ASR(self.vocab_size, **self.config['model']).to(self.device)
         self.verbose(self.model.create_msg())
         # Losses
         self.seq_loss = torch.nn.CrossEntropyLoss(ignore_index=0)
